@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 import time
+import os
 
 app = Flask(__name__)
 
@@ -10,31 +11,14 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 11; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9"
 }
-def has_renewed_offer(asin):
-    url = f"https://www.amazon.sa/dp/{asin}"
-    r = requests.get(url, headers=HEADERS, timeout=15)
-    if r.status_code != 200:
-        return False
 
-    page = r.text.lower()
-
-    keywords = [
-        "renewed",
-        "refurbished",
-        "amazon renewed",
-        "used",
-        "condition=used",
-        "مجددة",
-        "مستعملة"
-    ]
-
-    return any(k in page for k in keywords)
+# ---------------- UI ----------------
 
 HTML = """
 <!doctype html>
 <html>
 <head>
-    <title>Amazon ASIN Finder</title>
+    <title>Amazon.sa ASIN Finder</title>
     <style>
         body {
             font-family: Arial, Helvetica, sans-serif;
@@ -44,17 +28,15 @@ HTML = """
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #111;
         }
         .card {
             background: #fff;
-            width: 420px;
+            width: 460px;
             padding: 30px;
             border-radius: 12px;
             box-shadow: 0 15px 40px rgba(0,0,0,0.35);
         }
         h2 {
-            margin-top: 0;
             text-align: center;
             color: #232f3e;
         }
@@ -62,10 +44,8 @@ HTML = """
             width: 100%;
             padding: 12px;
             font-size: 15px;
-            margin-top: 10px;
             border-radius: 6px;
             border: 1px solid #ccc;
-            box-sizing: border-box;
         }
         button {
             width: 100%;
@@ -75,8 +55,8 @@ HTML = """
             background: #febd69;
             border: none;
             border-radius: 6px;
-            cursor: pointer;
             font-weight: bold;
+            cursor: pointer;
         }
         button:hover {
             background: #f3a847;
@@ -87,11 +67,10 @@ HTML = """
             border-radius: 6px;
             background: #f1f3f6;
             font-weight: bold;
-            text-align: center;
             word-break: break-all;
         }
         .footer {
-            margin-top: 15px;
+            margin-top: 12px;
             text-align: center;
             font-size: 12px;
             color: #555;
@@ -111,83 +90,70 @@ HTML = """
         {% endif %}
 
         <div class="footer">
-            Smart ASIN detection • Amazon.sa
+            Smart matching • Confidence-based • Amazon.sa
         </div>
     </div>
 </body>
 </html>
 """
 
-def normalize(text):
-    return text.lower().replace("-", " ").replace(",", " ")
+# ---------------- LOGIC ----------------
+
+def extract_features(text):
+    text = text.lower()
+    return {
+        "ipad": "ipad" in text,
+        "iphone": "iphone" in text,
+        "gen9": "9th" in text,
+        "gen8": "8th" in text,
+        "64gb": "64gb" in text,
+        "128gb": "128gb" in text,
+        "256gb": "256gb" in text,
+        "wifi": "wifi" in text,
+        "cellular": "cellular" in text or "4g" in text or "5g" in text,
+        "silver": "silver" in text,
+        "spacegray": "space gray" in text or "spacegrey" in text
+    }
 
 
-def extract_keywords(text):
-    tokens = normalize(text).split()
-    important = []
-    for t in tokens:
-        if (
-            "ipad" in t
-            or "iphone" in t
-            or "air" in t
-            or "mini" in t
-            or "pro" in t
-            or "gb" in t
-            or t.isdigit()
-            or "wifi" in t
-            or "cellular" in t
-            or "4g" in t
-            or "5g" in t
-        ):
-            important.append(t)
-    return important
+def confidence_score(search, title):
+    s = extract_features(search)
+    t = extract_features(title)
+
+    score = 0
+    details = []
+
+    for key in s:
+        if s[key]:
+            if t.get(key):
+                score += 10
+                details.append(key)
+            else:
+                details.append(f"missing:{key}")
+
+    return min(score, 100), details
 
 
-def title_matches(search, title):
-    s_keys = extract_keywords(search)
-    t = normalize(title)
-
-    for key in s_keys:
-        if key not in t:
-            return False
-
-    return True
-
-
-def find_renewed_asin(product):
+def find_asin(product):
     query = urllib.parse.quote_plus(product)
     search_url = f"https://www.amazon.sa/s?k={query}"
     r = requests.get(search_url, headers=HEADERS, timeout=15)
     soup = BeautifulSoup(r.text, "html.parser")
+
+    best_match = None
+    best_score = 0
+    best_details = ""
 
     for div in soup.select("div[data-asin]"):
         asin = div.get("data-asin")
         if not asin:
             continue
 
-        # open ASIN page
         url = f"https://www.amazon.sa/dp/{asin}"
         p = requests.get(url, headers=HEADERS, timeout=15)
         if p.status_code != 200:
             continue
 
-        page = p.text.lower()
-
-        # check refurbished / used
-        keywords = [
-            "renewed",
-            "refurbished",
-            "amazon renewed",
-            "used",
-            "condition=used",
-            "مجددة",
-            "مستعملة"
-        ]
-
-        if not any(k in page for k in keywords):
-            continue
-
-        # extract title
         psoup = BeautifulSoup(p.text, "html.parser")
         title_tag = psoup.find("span", {"id": "productTitle"})
         if not title_tag:
@@ -195,64 +161,32 @@ def find_renewed_asin(product):
 
         title = title_tag.get_text(strip=True)
 
-        # FINAL CHECK: exact match
-        if title_matches(product, title):
-            return asin
+        score, details = confidence_score(product, title)
+
+        if score > best_score:
+            best_score = score
+            best_match = asin
+            best_details = ", ".join(details)
 
         time.sleep(1)
 
-    return "NOT LISTED"
-
-    url = f"https://www.amazon.sa/dp/{asin}"
-    r = requests.get(url, headers=HEADERS, timeout=15)
-    if r.status_code != 200:
-        return False
-
-    page = r.text.lower()
-
-    keywords = [
-        "renewed",
-        "refurbished",
-        "amazon renewed",
-        "used",
-        "condition=used",
-        "مجددة",
-        "مستعملة"
-    ]
-
-    return any(word in page for word in keywords)
-
-
-def find_renewed_asin(product):
-    query = urllib.parse.quote_plus(product)
-    search_url = f"https://www.amazon.sa/s?k={query}"
-    r = requests.get(search_url, headers=HEADERS, timeout=15)
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    for div in soup.select("div[data-asin]"):
-        asin = div.get("data-asin")
-        if asin and has_renewed_offer(asin):
-            return asin
-        time.sleep(1)
+    if best_match and best_score >= 40:
+        return f"{best_match} | Confidence: {best_score}% | Details: {best_details}"
 
     return "NOT LISTED"
 
+# ---------------- ROUTE ----------------
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     result = None
     if request.method == "POST":
         product = request.form["product"]
-        result = find_renewed_asin(product)
+        result = find_asin(product)
     return render_template_string(HTML, result=result)
 
-
-if __name__ == "__main__":
-  import os
+# ---------------- RUN ----------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
-
