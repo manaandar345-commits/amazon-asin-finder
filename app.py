@@ -90,9 +90,10 @@ HTML = """
         {% endif %}
 
         <div class="footer">
-            Smart matching • Confidence-based • Amazon.sa
-        </div>
-    </div>
+    Smart matching • Confidence-based • Amazon.sa<br>
+    <span style="font-size:11px; opacity:0.7;">Built by Manaan</span>
+</div>
+</div>
 </body>
 </html>
 """
@@ -208,4 +209,5 @@ def index():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
