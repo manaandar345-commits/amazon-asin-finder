@@ -132,6 +132,24 @@ def confidence_score(search, title):
                 details.append(f"missing:{key}")
 
     return min(score, 100), details
+def quick_score(search, title):
+    search = search.lower()
+    title = title.lower()
+    score = 0
+
+    keywords = [
+        "ipad", "iphone",
+        "9th", "8th",
+        "64gb", "128gb", "256gb",
+        "wifi", "cellular",
+        "silver", "space gray"
+    ]
+
+    for k in keywords:
+        if k in search and k in title:
+            score += 10
+
+    return score
 
 
 def find_asin(product):
@@ -190,3 +208,4 @@ def index():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
